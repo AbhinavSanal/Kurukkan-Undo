@@ -1,0 +1,17 @@
+{
+  "name": "Kurukkan Undo?",
+  "short_name": "Kurukkan",
+  "description": "Real-time campus awareness reports.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070907",
+  "theme_color": "#070907",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "64x64",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
