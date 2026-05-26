@@ -9,8 +9,10 @@ import {
   runTransaction,
   Timestamp,
 } from "firebase/firestore";
-import { db } from "../lib/firebase";
 import type { CreateReportInput, Report, VoteType } from "../types";
+import { auth, db } from "../lib/firebase";
+import { reportTtlMinutes } from "../config";
+import { toAreaKey } from "../lib/geo";
 
 // The Firestore collection name
 const REPORTS_COLLECTION = "reports";
@@ -134,5 +136,63 @@ export const castVoteInDb = async (
       upvotes: newUpvotes,
       downvotes: newDownvotes,
     });
+  });
+};
+
+export const createRemoteReport = async (input: CreateReportInput): Promise<string> => {
+  if (!db) throw new Error("Firebase not initialized");
+  const user = auth?.currentUser;
+  if (!user) throw new Error("Sign in before reporting.");
+
+  const expiryTime = new Date(Date.now() + reportTtlMinutes * 60 * 1000);
+
+  const docRef = await addDoc(collection(db, "reports"), {
+    latitude: input.latitude,
+    longitude: input.longitude,
+    note: input.note?.trim() ?? "",
+    createdBy: user.uid,
+    timestamp: serverTimestamp(),
+    expiryTimestamp: Timestamp.fromDate(expiryTime),
+    upvotes: 0,
+    downvotes: 0,
+    areaKey: toAreaKey(input),
+  });
+  return docRef.id;
+};
+
+export const voteRemoteReport = async (reportId: string, voteType: VoteType): Promise<void> => {
+  if (!db) throw new Error("Firebase not initialized");
+  const user = auth?.currentUser;
+  if (!user) throw new Error("Sign in before voting.");
+
+  const reportRef = doc(db, "reports", reportId);
+  const voteRef = doc(db, "votes", `${reportId}_${user.uid}`);
+
+  await runTransaction(db, async (transaction) => {
+    const reportDoc = await transaction.get(reportRef);
+    const voteDoc = await transaction.get(voteRef);
+    if (!reportDoc.exists()) throw new Error("Report does not exist!");
+
+    let upvotes = reportDoc.data().upvotes ?? 0;
+    let downvotes = reportDoc.data().downvotes ?? 0;
+
+    if (voteDoc.exists()) {
+      const prev = voteDoc.data().voteType as VoteType;
+      if (prev === voteType) {
+        if (voteType === "upvote") upvotes--;
+        else downvotes--;
+        transaction.delete(voteRef);
+        transaction.update(reportRef, { upvotes, downvotes });
+        return;
+      }
+      if (prev === "upvote") upvotes--;
+      else downvotes--;
+    }
+
+    if (voteType === "upvote") upvotes++;
+    else downvotes++;
+
+    transaction.set(voteRef, { reportId, userId: user.uid, voteType, timestamp: serverTimestamp() });
+    transaction.update(reportRef, { upvotes, downvotes });
   });
 };
